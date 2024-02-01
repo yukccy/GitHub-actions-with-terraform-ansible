@@ -1,0 +1,40 @@
+name: Clean up all resources created by Terraform and Ansible
+run-name: Clean up all resources created by Terraform and Ansible in your AWS ${{ inputs.aws_region }} region
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        type: string
+        required: true
+        default: us-east-1
+      bucket_name:
+        type: string
+        required: true
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+      - name: Setup AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws_region }}
+      - name: Repository checkout
+        uses: actions/checkout@v4
+      - name: Update bucket name
+        run: sed -i "s|your-bucket-name|${{ inputs.bucket_name }}|" backend.tf
+      - name: Create terraform.tfvars
+        run: echo "ec2_keypair_public_key=\"${{ secrets.EC2_PUBLIC_KEY }}\"" > terraform.tfvars
+      - name: Download terraform.lock.hcl
+        run: aws s3 cp s3://${{ inputs.bucket_name }}/.terraform.lock.hcl .
+      - name: Initialize Terraform Dependencies
+        run: terraform init
+      - name: Delete Terraform resources
+        run: terraform destroy --auto-approve
+      - name: Delete state file and lock file on S3
+        run: aws s3 rm --recursive s3://${{ inputs.bucket_name }}/state && aws s3 rm s3://${{ inputs.bucket_name }}/.terraform.lock.hcl

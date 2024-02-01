@@ -1,0 +1,53 @@
+name: Create a Nginx Web Server on your AWS account
+run-name: Create a Nginx Web Server on your AWS ${{ inputs.aws_region }} region
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        type: string
+        required: true
+        default: us-east-1
+      bucket_name:
+        type: string
+        required: true
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+      - name: Setup AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws_region }}
+      - name: Repository checkout
+        uses: actions/checkout@v4
+      - name: Update bucket name
+        run: sed -i "s|your-bucket-name|${{ inputs.bucket_name }}|" backend.tf
+      - name: Create terraform.tfvars
+        run: echo "ec2_keypair_public_key=\"${{ secrets.EC2_PUBLIC_KEY }}\"" > terraform.tfvars
+      - name: Initialize Terraform Dependencies
+        run: terraform init
+      - name: Validate Terraform scripts
+        run: terraform validate
+      - name: Apply Terraform resources creation
+        run: terraform apply --auto-approve
+      - name: Add SSH key
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          mkdir -p /home/runner/.ssh
+          echo "${{ secrets.EC2_PRIVATE_KEY }}" > /home/runner/.ssh/id_rsa
+          chmod 600 /home/runner/.ssh/id_rsa
+          ssh-agent -a $SSH_AUTH_SOCK > /dev/null	
+          ssh-add /home/runner/.ssh/id_rsa
+      - name: Install Nginx by Ansible
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: ansible-playbook -i inventory install_nginx.yaml
+      - name: Upload .terraform.lock.hcl
+        run: aws s3 cp .terraform.lock.hcl s3://${{ inputs.bucket_name }}
